@@ -136,11 +136,6 @@
 	#define PUT_OUTSIDE_SCOPE_CLIENT_DECLARATION
 #endif
 
-// This two value can take a number 1..20 or you can specify 'a'
-// but with auto you can lost specified response error
-#define DEFAULT_EHLO_RESPONSE_COUNT 6
-#define DEFAULT_CONNECTION_RESPONSE_COUNT 0
-
 #define SD_CS_PIN SS
 #define SPIFM_CS_PIN SS
 

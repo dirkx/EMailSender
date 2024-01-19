@@ -32,6 +32,10 @@
  * THE SOFTWARE.
  */
 
+// Dirty hack to include a replacment WiFiCLientSecure class that is
+// currently hopefully making its way into the SDK (PR#9100) so we can
+// test/collaborate on it ahead of time.
+//
 #include "EMailSender.h"
 #include <stdio.h>
 #if defined(ESP32)
@@ -42,6 +46,7 @@
 //#include <LittleFS.h>
 
 //#define SD SPIFFS
+// #define EMAIL_SENDER_DEBUG
 
 // BASE64 -----------------------------------------------------------
 const char PROGMEM b64_alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -102,12 +107,6 @@ int base64_enc_length(int plainLen) {
 
 const char* encode64_f(char* input, uint8_t len) {
   // encoding
-
-	DEBUG_PRINTLN(F("Encoding"));
-
-	DEBUG_PRINTLN(input);
-	DEBUG_PRINTLN(len);
-
   //int encodedLen =
  base64_enc_length(len);
   static char encoded[256];
@@ -126,7 +125,6 @@ EMailSender::EMailSender(const char* email_login, const char* email_password, co
 	this->setSMTPServer(smtp_server);
 	this->setSMTPPort(smtp_port);
 	this->setNameFrom(name_from);
-//	this->isSecure = isSecure;
 }
 EMailSender::EMailSender(const char* email_login, const char* email_password, const char* email_from,
 		const char* smtp_server, uint16_t smtp_port) {
@@ -136,7 +134,6 @@ EMailSender::EMailSender(const char* email_login, const char* email_password, co
 	this->setSMTPServer(smtp_server);
 	this->setSMTPPort(smtp_port);
 
-//	this->isSecure = isSecure;
 }
 
 EMailSender::EMailSender(const char* email_login, const char* email_password, const char* email_from, const char* name_from ) {
@@ -146,14 +143,12 @@ EMailSender::EMailSender(const char* email_login, const char* email_password, co
 	this->setNameFrom(name_from);
 	this->setNameFrom(name_from);
 
-//	this->isSecure = isSecure;
 }
 EMailSender::EMailSender(const char* email_login, const char* email_password, const char* email_from) {
 	this->setEMailLogin(email_login);
 	this->setEMailFrom(email_from);
 	this->setEMailPassword(email_password);
 
-//	this->isSecure = isSecure;
 }
 
 EMailSender::EMailSender(const char* email_login, const char* email_password){
@@ -161,7 +156,6 @@ EMailSender::EMailSender(const char* email_login, const char* email_password){
 	this->setEMailFrom(email_login);
 	this->setEMailPassword(email_password);
 
-//	this->isSecure = isSecure;
 }
 
 void EMailSender::setSMTPPort(uint16_t smtp_port){
@@ -197,62 +191,47 @@ void EMailSender::setEMailPassword(const char* email_password){
 void EMailSender::setIsSecure(bool isSecure) {
 	this->isSecure = isSecure;
 }
+void EMailSender::setTrySecure(bool trySecure) {
+	this->trySecure = trySecure;
+}
+
+EMailSender::Response EMailSender::errResponse(String code, String desc) {
+	EMailSender::Response response;
+	response.code = code;
+	response.desc = desc;
+	response.status = false;
+	return response;
+};
 
 #ifdef SSLCLIENT_WRAPPER
 EMailSender::Response EMailSender::awaitSMTPResponse(SSLClient &client,
-		const char* resp, const char* respDesc, uint16_t timeOut) {
-	EMailSender::Response response;
-	uint32_t ts = millis();
-	while (!client.available()) {
-		if (millis() > (ts + timeOut)) {
-			response.code = F("1");
-			response.desc = String(respDesc) + "! " + F("SMTP Response TIMEOUT!");
-			response.status = false;
-
-			return response;
-		}
-	}
-	_serverResponce = client.readStringUntil('\n');
-
-	DEBUG_PRINTLN(_serverResponce);
-	if (resp && _serverResponce.indexOf(resp) == -1){
-		response.code = resp;
-		response.desc = respDesc +String(" (") + _serverResponce + String(")");
-		response.status = false;
-
-		return response;
-	}
-
-	response.status = true;
-	return response;
-}
+		const char* resp, const char* respDesc, uint16_t timeOut) 
 #else
 EMailSender::Response EMailSender::awaitSMTPResponse(EMAIL_NETWORK_CLASS &client,
-		const char* resp, const char* respDesc, uint16_t timeOut) {
+		const char* resp, const char* respDesc, uint16_t timeOut) 
+#endif
+{
 	EMailSender::Response response;
 	uint32_t ts = millis();
 	while (!client.available()) {
-		if (millis() > (ts + timeOut)) {
-			response.code = F("1");
-			response.desc = String(respDesc) + "! " + F("SMTP Response TIMEOUT!");
-			response.status = false;
-			return response;
-		}
+		if (millis() > (ts + timeOut))  {
+			client.flush();
+			client.stop();
+			return errResponse(F("1"), String(respDesc) + "! " + F("SMTP Response TIMEOUT!"));
+		};
 	}
 	_serverResponce = client.readStringUntil('\n');
 
 	DEBUG_PRINTLN(_serverResponce);
-	if (resp && _serverResponce.indexOf(resp) == -1){
-		response.code = resp;
-		response.desc = respDesc +String(" (") + _serverResponce + String(")");
-		response.status = false;
-		return response;
-	}
+	if (resp && _serverResponce.indexOf(resp) == -1) {
+		client.flush();
+		client.stop();
+		return errResponse(resp, respDesc +String(" (") + _serverResponce + String(")"));
+	};
 
 	response.status = true;
 	return response;
 }
-#endif
 
 static const char cb64[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 void encodeblock(unsigned char in[3],unsigned char out[4],int len) {
@@ -265,7 +244,7 @@ void encodeblock(unsigned char in[3],unsigned char out[4],int len) {
 	#ifdef STORAGE_EXTERNAL_ENABLED
 		#if (defined(DIFFERENT_FILE_MANAGE) && defined(EMAIL_FILE_EX)) || !defined(STORAGE_INTERNAL_ENABLED)
 			#ifdef SSLCLIENT_WRAPPER
-						void encode(EMAIL_FILE_EX *file, SSLClient *client) {
+				void encode(EMAIL_FILE_EX *file, SSLClient *client) {
 						unsigned char in[3],out[4];
 						int i,len,blocksout=0;
 
@@ -291,7 +270,7 @@ void encodeblock(unsigned char in[3],unsigned char out[4],int len) {
 						}
 
 			#else
-					void encode(EMAIL_FILE_EX *file, EMAIL_NETWORK_CLASS *client) {
+				void encode(EMAIL_FILE_EX *file, EMAIL_NETWORK_CLASS *client) {
 						unsigned char in[3],out[4];
 						int i,len,blocksout=0;
 
@@ -300,7 +279,7 @@ void encodeblock(unsigned char in[3],unsigned char out[4],int len) {
 							for (i=0;i<3;i++){
 								in[i]=(unsigned char) file->read();
 									if (file->available()!=0) len++;
-											else in[i]=0;
+										else in[i]=0;
 							}
 							if (len){
 								encodeblock(in,out,len);
@@ -411,8 +390,7 @@ EMailSender::Response EMailSender::send(char* tos[], byte sizeOfTo,  byte sizeOf
 
 
 EMailSender::Response EMailSender::send(String to, EMailMessage &email, Attachments attachments){
-	  DEBUG_PRINT(F("ONLY ONE RECIPIENT"));
-
+    DEBUG_PRINT(F("ONLY ONE RECIPIENT\n"));
 	const char* arrEmail[] =  {to.c_str()};
 	return send(arrEmail, 1, email, attachments);
 }
@@ -430,14 +408,13 @@ EMailSender::Response EMailSender::send(String tos[], byte sizeOfTo,  byte sizeO
 }
 
 EMailSender::Response EMailSender::send(const char* to, EMailMessage &email, Attachments attachments){
-	  DEBUG_PRINT(F("ONLY ONE RECIPIENT"));
-
+    DEBUG_PRINT(F("ONLY ONE RECIPIENT\n"));
 	const char* arrEmail[] =  {to};
 	return send(arrEmail, 1, email, attachments);
 }
 
 EMailSender::Response EMailSender::send(const char* to[], byte sizeOfTo, EMailMessage &email, Attachments attachments) {
-	DEBUG_PRINTLN(F("miltiple destination and attachments"));
+	DEBUG_PRINTLN(F("miltiple destination and attachments\n"));
 	return send(to, sizeOfTo, 0, email, attachments);
 }
 
@@ -470,8 +447,6 @@ EMailSender::Response EMailSender::send(const char* to[], byte sizeOfTo,  byte s
 	  EMAIL_NETWORK_CLASS client;
 	#endif
 
-  DEBUG_PRINT(F("Insecure client:"));
-  DEBUG_PRINTLN(this->isSecure);
 	#ifndef FORCE_DISABLE_SSL
 		#if (EMAIL_NETWORK_TYPE == NETWORK_ESP8266 || EMAIL_NETWORK_TYPE == NETWORK_ESP8266_242)
 			#ifndef ARDUINO_ESP8266_RELEASE_2_4_2
@@ -485,17 +460,8 @@ EMailSender::Response EMailSender::send(const char* to[], byte sizeOfTo,  byte s
 				  if (mfln) {
 					  client.setBufferSizes(512, 512);
 				  }
-			  }
+			}
 			#endif
-		#elif (EMAIL_NETWORK_TYPE == NETWORK_ESP32)
-		//	  String coreVersion = String(ESP.getSdkVersion());
-		//	  uint8_t firstdot = coreVersion.indexOf('.');
-		//
-		//	  DEBUG_PRINTLN(coreVersion.substring(1, coreVersion.indexOf('.', firstdot+1)).toFloat());
-		//	  DEBUG_PRINTLN(coreVersion.substring(1, coreVersion.indexOf('.', firstdot+1)).toFloat() >= 3.3f);
-		//	  if (coreVersion.substring(1, coreVersion.indexOf('.', firstdot+1)).toFloat() >= 3.3f) {
-		//		  client.setInsecure();
-		//	  }
 			#ifndef ARDUINO_ARCH_RP2040
 				#include <core_version.h>
 				#if ((!defined(ARDUINO_ESP32_RELEASE_1_0_4)) && (!defined(ARDUINO_ESP32_RELEASE_1_0_3)) && (!defined(ARDUINO_ESP32_RELEASE_1_0_2)))
@@ -505,55 +471,43 @@ EMailSender::Response EMailSender::send(const char* to[], byte sizeOfTo,  byte s
 			    client.setInsecure();
 			#endif
 		#endif
+        if (!this->isSecure && this->trySecure)
+		// When we are not connecting through SSL directly; we try to 
+		// upgrade to SSL or TLS via StartTLS whenever possible by
+		// default.
+  		DEBUG_PRINTLN(F("Setting PLAINtext start"));
+		client.setPlainStart();
 	#endif
 #endif
-  EMailSender::Response response;
 
-  DEBUG_PRINTLN(this->smtp_server);
+  DEBUG_PRINT(F("MTA: "));
+  DEBUG_PRINT(this->smtp_server);
+  DEBUG_PRINT(F(" port: "));
   DEBUG_PRINTLN(this->smtp_port);
 
-  if(!client.connect(this->smtp_server, this->smtp_port)) {
-	  response.desc = F("Could not connect to mail server");
-	  response.code = F("2");
-	  response.status = false;
+  DEBUG_PRINT(F("SSL    : "));
+  DEBUG_PRINTLN(this->isSecure ? "on" : "off");
+  DEBUG_PRINT(F("Try SSL:"));
+  DEBUG_PRINTLN(this->trySecure ? "yes" : "no");
 
-	  client.flush();
-	  client.stop();
+  EMailSender::Response response;
 
-	  return response;
-  }
+  if(!client.connect(this->smtp_server, this->smtp_port)) 
+	  return errResponse(F("2"),F("Could not connect to mail server"));
 
-  response = awaitSMTPResponse(client, "220", "Connection Error");
-  if (!response.status) {
-	  client.flush();
-	  client.stop();
-	  return response;
-  }
+  for(int i = 0; i < 1024 /* for servers sending silly numbers*/; i++) { 
+     response = awaitSMTPResponse(client, "220", "Connection Error");
+     if (!response.status) 
+	 return response;
 
-  if (this->additionalResponseLineOnConnection == 0) {
-  	  if (DEFAULT_CONNECTION_RESPONSE_COUNT == 'a'){
-  	    this->additionalResponseLineOnConnection = 255;
-  	  } else {
-  	    this->additionalResponseLineOnConnection = DEFAULT_CONNECTION_RESPONSE_COUNT;
-  	  }
-  }
+     // In SMTP - the final cmdn response line has a space after the status;
+     // continued lines have a '-' in this position.
+     //
+     if (_serverResponce.charAt(3) == ' ') 
+       break;
+  };
 
-  if (this->additionalResponseLineOnConnection > 0){
-	  for (int i = 0; i<=this->additionalResponseLineOnConnection; i++) {
-		response = awaitSMTPResponse(client, "220", "Connection response error ", 2500);
-		//if additionalResponseLineOnConnection is set to 255: wait out all code 250 responses, then continue
-        if (this->additionalResponseLineOnConnection == 255) break;
-        else {
-            if (!response.status && response.code == F("1")) {
-                response.desc = F("Connection error! Reduce the HELO response line!");
-                client.flush();
-                client.stop();
-                return response;
-            }
-		}
-	  }
-  }
-
+for(int retry= 0; retry < this->isSecure ? 1 : 2; retry++) {
   String commandHELO = "HELO";
   if (this->useEHLO == true) {
 	  commandHELO = "EHLO";
@@ -564,73 +518,84 @@ EMailSender::Response EMailSender::send(const char* to[], byte sizeOfTo,  byte s
 
   response = awaitSMTPResponse(client, "250", "Identification error");
   if (!response.status) {
-	  client.flush();
-	  client.stop();
 	  return response;
   }
+    
+  bool hasStartTLS = false;
 
-  if (this->useEHLO == true && this->additionalResponseLineOnHELO == 0) {
-	  if (DEFAULT_EHLO_RESPONSE_COUNT == 'a'){
-	    this->additionalResponseLineOnHELO = 255;
-	  } else {
-	    this->additionalResponseLineOnHELO = DEFAULT_EHLO_RESPONSE_COUNT;
-	  }
-  }
+  for(int i = 0; i < 1024 /* for servers sending silly numbers*/; i++) { 
+      response = awaitSMTPResponse(client, "250", "EHLO error", 2500);
+      if (!response.status) {
+                        return response;
+      }
+      if (i) {
+          String capability = _serverResponce.substring(4); // Strip "250<space>
+          capability.toUpperCase();
 
-  if (this->additionalResponseLineOnHELO > 0){
-	  for (int i = 0; i<=this->additionalResponseLineOnHELO; i++) {
-		response = awaitSMTPResponse(client, "250", "EHLO error", 2500);
-		if (!response.status && response.code == F("1")) {
-			//if additionalResponseLineOnHELO is set to 255: wait out all code 250 responses, then continue
-			if (this->additionalResponseLineOnHELO == 255) break;
-			else {
-				response.desc = F("Timeout! Reduce additional HELO response line count or set it to 255!");
-				client.flush();
-				client.stop();
-				return response;
-			}
-		}
-	  }
-  }
+            if (capability.startsWith("AUTH")) {
+                useAuth = true;
+
+                if (capability.indexOf("CRAM-MD5") != -1)
+                    this->isCramMD5Login = true;
+
+                if (capability.indexOf("SASL") != -1)
+                     this->isSASLLogin = true;
+
+                if (capability.indexOf("PLAIN") != -1)
+                     this->isPlainLogin = true;
+
+                // if (capability.indexOf("DIGEST-MD5") != -1)
+                //   --> not supporting - retired by RFC 6331 
+
+                // if (capability.indexOf("LOGIN") != -1) 
+		// --> the fall through default; we always try this
+            };
+
+            if (capability.startsWith("STARTTLS")) 
+	          hasStartTLS = true;
+      }
+
+      // In SMTP - the final cmdn response line has a space after the status;
+      // continued lines have a '-' in this position.
+      //
+      if (_serverResponce.charAt(3) == ' ') 
+             break;
+    }
+    if (!hasStartTLS || this->isSecure) 
+       break;
+
+    if (!this->trySecure) {
+       log_i("Configured to not upgrade to TLS/SSL.");
+       break;
+    };
+
+    log_d("Start upgrade to TLS");
+    client.println("STARTTLS");
+
+     // eat the "220 2.0.0 Ready to start TLS" ready reply.
+     response = awaitSMTPResponse(client, "220", "STARTTLS error", 2500);
+     if (!response.status) {
+       response.desc = F("Timeout during confirmation STARTTLS upgrade");
+       return response;
+     }
+     DEBUG_PRINTLN("Switched to TLS/SSL");
+     if (!client.startTLS()) {
+        response.desc = F("Error during in-line upgrade to TLS/SSL");
+        client.flush();
+        client.stop();
+        return response;
+     }
+     DEBUG_PRINTLN("Switched to TLS/SSL - conection now encrypted.");
+     this->isSecure = true;
+     continue;
+}
 
   if (useAuth){
-	  if (this->isSASLLogin == true){
+	  if (!this->isSecure && !this->isCramMD5Login) 
+		log_i("Warning: Using an insecure (plaintext) authentication method.");
 
-		  int size = 1 + strlen(this->email_login)+ strlen(this->email_password)+2;
-	      char * logPass = (char *) malloc(size);
-
-//	      strcpy(logPass, " ");
-//	      strcat(logPass, this->email_login);
-//	      strcat(logPass, " ");
-//	      strcat(logPass, this->email_password);
-
-//		  String logPass;
-	      int maincont = 0;
-
-	      logPass[maincont++] = ' ';
-	      logPass[maincont++] = (char) 0;
-
-	      for (unsigned int i = 0;i<strlen(this->email_login);i++){
-	    	  logPass[maincont++] = this->email_login[i];
-	      }
-	      logPass[maincont++] = (char) 0;
-	      for (unsigned int i = 0;i<strlen(this->email_password);i++){
-	    	  logPass[maincont++] = this->email_password[i];
-	      }
-
-
-//	      strcpy(logPass, "\0");
-//	      strcat(logPass, this->email_login);
-//	      strcat(logPass, "\0");
-//	      strcat(logPass, this->email_password);
-
-		  String auth = "AUTH PLAIN "+String(encode64_f(logPass, size));
-//		  String auth = "AUTH PLAIN "+String(encode64(logPass));
-		  DEBUG_PRINTLN(auth);
-		  client.println(auth);
-          }
 #if defined(ESP32)
-	  else if (this->isCramMD5Login == true) {
+	  if (this->isCramMD5Login == true) {
 		  DEBUG_PRINTLN(F("AUTH CRAM-MD5"));
 		  client.println(F("AUTH CRAM-MD5"));
 
@@ -638,8 +603,6 @@ EMailSender::Response EMailSender::send(const char* to[], byte sizeOfTo,  byte s
 		  //
                   response = awaitSMTPResponse(client,"334","No digest error");
                   if (!response.status) {
-			client.flush(); 
-			client.stop(); 
 			return response; 
 		  };
 		  _serverResponce = _serverResponce.substring(4); // '334<space>'
@@ -691,22 +654,48 @@ EMailSender::Response EMailSender::send(const char* to[], byte sizeOfTo,  byte s
  		  // now exepct the normal login confirmation to continue.
 	}
 #endif 
-	  else{
+	// we prefer PLAIN over LOGIN; as the latter was obsoluted by PLAIN.
+	//
+	  else if (this->isPlainLogin == true) {
+                  char buff[256 * 2 + 3]; // Max Size per RFC 4616
+                  size_t l = snprintf(buff,sizeof(buff),"%c%s%c%s%c", 0, this->email_login, 0, this->email_password, 0);
+		  DEBUG_PRINTLN(F("AUTH PLAIN"));
+		  client.print(F("AUTH PLAIN"));
+		  client.println(encode64(this->email_password));
+          }
+	  else if (this->isSASLLogin == true) {
+
+		  int size = 1 + strlen(this->email_login)+ strlen(this->email_password)+2;
+	      char * logPass = (char *) malloc(size);
+	      int maincont = 0;
+
+	      logPass[maincont++] = ' ';
+	      logPass[maincont++] = (char) 0;
+
+	      for (unsigned int i = 0;i<strlen(this->email_login);i++){
+	    	  logPass[maincont++] = this->email_login[i];
+	      }
+	      logPass[maincont++] = (char) 0;
+	      for (unsigned int i = 0;i<strlen(this->email_password);i++){
+	    	  logPass[maincont++] = this->email_password[i];
+	      }
+
+		  String auth = "AUTH PLAIN "+String(encode64_f(logPass, size));
+		  DEBUG_PRINTLN(auth);
+		  client.println(auth);
+          }
+	  else {
 		  DEBUG_PRINTLN(F("AUTH LOGIN:"));
 		  client.println(F("AUTH LOGIN"));
 		  awaitSMTPResponse(client);
 
-		  DEBUG_PRINTLN(encode64(this->email_login));
 		  client.println(encode64(this->email_login));
 		  awaitSMTPResponse(client);
 
-		  DEBUG_PRINTLN(encode64(this->email_password));
 		  client.println(encode64(this->email_password));
 	  }
 	  response = awaitSMTPResponse(client, "235", "SMTP AUTH error");
 	  if (!response.status) {
-		  client.flush();
-		  client.stop();
 		  return response;
 	  }
   }
@@ -718,11 +707,6 @@ EMailSender::Response EMailSender::send(const char* to[], byte sizeOfTo,  byte s
   client.print(this->email_from);
   client.println(F(">"));
   awaitSMTPResponse(client);
-
-//  String rcpt = "RCPT TO: <" + String(to) + '>';
-//
-//  DEBUG_PRINTLN(rcpt);
-//  client.println(rcpt);
 
   int cont;
   for (cont=0;cont<(sizeOfTo+sizeOfCc+sizeOfCCn);cont++){
@@ -741,12 +725,8 @@ EMailSender::Response EMailSender::send(const char* to[], byte sizeOfTo,  byte s
 
   response = awaitSMTPResponse(client, "354", "SMTP DATA error");
   if (!response.status) {
-	  client.flush();
-	  client.stop();
 	  return response;
   }
-
-//  client.println("From: <" + String(this->email_from) + '>');
 
   client.print(F("From: "));
   if (this->name_from){
@@ -755,8 +735,6 @@ EMailSender::Response EMailSender::send(const char* to[], byte sizeOfTo,  byte s
   client.print(F(" <"));
   client.print(this->email_from);
   client.println(F(">"));
-
-//  client.println("To: <" + String(to) + '>');
 
   client.print(F("To: "));
   for (cont=0;cont<sizeOfTo;cont++){
@@ -1086,8 +1064,6 @@ EMailSender::Response EMailSender::send(const char* to[], byte sizeOfTo,  byte s
 
   response = awaitSMTPResponse(client, "250", "Sending message error");
   if (!response.status) {
-	  client.flush();
-	  client.stop();
 	  return response;
   }
 
@@ -1095,8 +1071,6 @@ EMailSender::Response EMailSender::send(const char* to[], byte sizeOfTo,  byte s
 
   response = awaitSMTPResponse(client, "221", "SMTP QUIT error");
   if (!response.status) {
-	  client.flush();
-	  client.stop();
 	  return response;
   }
 

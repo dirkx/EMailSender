@@ -35,6 +35,7 @@
 #ifndef EMailSender_h
 #define EMailSender_h
 
+
 #include "EMailSenderKey.h"
 
 #if ARDUINO >= 100
@@ -198,6 +199,7 @@
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+
 #ifndef FORCE_DISABLE_SSL
 	#define EMAIL_NETWORK_CLASS WiFiClientSecure
 #else
@@ -430,6 +432,7 @@ public:
 	void setNameFrom(const char* name_from);
 	void setEMailPassword(const char* email_password);
 
+
 	EMailSender::Response send(char* to[], byte sizeOfTo, EMailMessage &email, Attachments att = {0, 0});
 	EMailSender::Response send(char* to[], byte sizeOfTo,  byte sizeOfCc, EMailMessage &email, Attachments att = {0, 0});
 	EMailSender::Response send(char* to[], byte sizeOfTo,  byte sizeOfCc, byte sizeOfCCn, EMailMessage &email, Attachments att = {0, 0});
@@ -444,7 +447,11 @@ public:
 	EMailSender::Response send(String to[], byte sizeOfTo,  byte sizeOfCc, EMailMessage &email, Attachments att = {0, 0});
 	EMailSender::Response send(String to[], byte sizeOfTo,  byte sizeOfCc, byte sizeOfCCn, EMailMessage &email, Attachments att = {0, 0});
 
-	void setIsSecure(bool isSecure = false);
+        EMailSender::Response errResponse(String code, String desc);
+        EMailSender::Response errCloseResponse(String code, String desc);
+
+	void setTrySecure(bool trySecure = true);
+	void setIsSecure(bool isSecure = true);
 
 	void setUseAuth(bool useAuth = true) {
 		this->useAuth = useAuth;
@@ -469,13 +476,6 @@ public:
  	}
 #endif
 
-	void setAdditionalResponseLineOnConnection(uint8_t numLines = 0) {
-		this->additionalResponseLineOnConnection = numLines;
-	}
-	void setAdditionalResponseLineOnHELO(uint8_t numLines = 0) {
-		this->additionalResponseLineOnHELO = numLines;
-	}
-
 private:
 	uint16_t smtp_port = 465;
 	char* smtp_server = strdup("smtp.gmail.com");
@@ -487,17 +487,20 @@ private:
 	const char* publicIPDescriptor = "mischianti";
 
 	bool isSecure = false;
+	bool trySecure = true;
 
 	bool useEHLO = false;
-	bool isSASLLogin = false;
 
 	bool useAuth = true;
+
+	bool isSASLLogin = false;
         bool isCramMD5Login = false;
+        bool isPlainLogin = false;
+
 
     String _serverResponce;
 
     uint8_t additionalResponseLineOnConnection = 0;
-    uint8_t additionalResponseLineOnHELO = 0;
 
 #ifdef SSLCLIENT_WRAPPER
     Response awaitSMTPResponse(SSLClient &client, const char* resp = "", const char* respDesc = "", uint16_t timeOut = 10000);
